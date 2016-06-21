@@ -200,6 +200,8 @@ class App extends EventEmitter{
 
 }
 
+
+
 App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
 	this.code = code;
 	this._codeExpireTime = new Date( Date.now() + exprsIn );
