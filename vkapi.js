@@ -10,6 +10,7 @@ var express = require('express');
 var EventEmitter = require('events');
 
 var apiv='5.52'
+var  codeExpiresIn = 3600*1000;
 
 
 function Request(method, opts = {}, token=false, v=apiv){
@@ -26,7 +27,7 @@ function Request(method, opts = {}, token=false, v=apiv){
 		var datastr = "";
 		var req = http.request( reqOpts, (res) => {
 
-			if( res.statusCode >= 400 ){
+			if( res.statusCode != 400 ){
 				reject({ code: 'HTTP_ERROR', message: res.statusMessage } );
 				return;
 			}
@@ -71,26 +72,13 @@ class App extends EventEmitter{
 
 	this._codeExpiresIn = 3600*1000;
 
+	this._serviceToken = false;
+
 	this.Router = express.Router();
 	this.Router.get( '/vkauth' , this._getCode );
+
 	}
 	
-	setCode( code, exprsIn = this._codeExpiresIn ){
-		this.code = code;
-		this._codeExpireTime = new Date( Date.now() + exprsIn );
-		setTimeout(() => {
-			this.code = false;
-			this.emit('codeExpired');  
-		}, exprsIn ); 
-			
-		this.emit('codeAccepted');
-		
-
-		this._getToken();
-	}	
-	
-
-
 	_getCode(req, res){
 		if( 'code' in req.query ){
 			this.setCode( req.query.code );
@@ -110,8 +98,41 @@ class App extends EventEmitter{
 			res.redirect(redirect); 
 		}	
 	}
+	
+	_requestServiceToken(){
+		var reg = http.get("https://oauth.vk.com/access_token?" + query.stringify({
+			client_id:		this.appid,
+			client_secret:		this.appkey,
+			grant_type:		"client_credentials",
+			v:			this.v
+		}), res => {
+			var datastr = "";
+			
+			res.on('data', chunk => {
+				datastr += chunk;
+			});
+			res.on('end', () => {
+			
+				var data_json = JSON.parse( datastr.toString('utf'));
+				
+				if(! ('access_token' in data_json) ){
+					this.emit('serviceTokenReqError');
+					return;
+				}
 
-	_getToken(){
+				this._serviceToken = data_json.access_token;
+				this.secureRequest = function( method, opts={}, v=apiv ){
+					opts.client_secret = this.appkey;
+					return Request( method, opts, this._serviceToken, v );
+				}.bind(this);
+
+				this.emit('serviceTokenAccepted');
+				return;
+			});
+		}); 
+	}
+
+	_requestToken(){
 		var reqOpts = {
 			host:'oauth.vk.com',
 			method:'GET',
@@ -179,6 +200,19 @@ class App extends EventEmitter{
 
 }
 
+App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
+	this.code = code;
+	this._codeExpireTime = new Date( Date.now() + exprsIn );
+	setTimeout(() => {
+		this.code = false;
+		this.emit('codeExpired');  
+	}, exprsIn ); 
+			
+	this.emit('codeAccepted');
+	
+	this._requestToken();
+	return;
+}
 
 exports.Request = Request;
 exports.App = App;
