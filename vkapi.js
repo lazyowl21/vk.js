@@ -12,11 +12,30 @@ var EventEmitter = require('events');
 var apiv='5.52'
 var  codeExpiresIn = 3600*1000;
 
+function requestBody( opts ){
+logger.debug('requestBody: request: ', opts);
 
-function Request(method, opts = {}, token=false, v=apiv){
+return new Promise( ( resolve, reject ) => {
+	var req = http.request( opts, res => {
+		if( res.statusCode != 200 )
+			return reject( { code:'HTTP_ERROR', message:res.statusMessage } );
 
-	if(token) opts.access_token = token;
-	opts.v = v;
+		var databuf = "";
+		
+		res.on( 'data', chunk => { databuf+=chunk;  } );
+		res.on( 'end' , () => {
+			logger.debug('requestBody: response: ', databuf.toString('utf8'));
+			return resolve( databuf ); 
+		});
+	});
+	req.end();
+});
+}
+
+
+
+
+function Request(method, opts = {}){
 	var reqOpts = {
 		hostname:'api.vk.com',
 		method:'POST',
@@ -24,34 +43,23 @@ function Request(method, opts = {}, token=false, v=apiv){
 	}
 
 	return new Promise( (resolve, reject)=>{
-		var datastr = "";
-		var req = http.request( reqOpts, (res) => {
-
-			if( res.statusCode != 400 ){
-				reject({ code: 'HTTP_ERROR', message: res.statusMessage } );
-				return;
-			}
-			res.on('data',  chunk => {
-				datastr+=chunk;
-			});
-			res.on('end', ()=>{
-				var data_json = JSON.parse(datastr.toString('utf8'));
-				if( 'response' in data_json ){ 
-					resolve( data_json.response );
+		requestBody( reqOpts ).then(
+			response => {
+				var data = {};
+				try{
+					data = JSON.parse( response.toString('utf8'));
 				}
-				else if('error' in data_json ){ 
-					reject( data_json.error  );
-				}
-				else{
-					reject( { code:'UNKNOWN_ERROR' } ); 			}
-			}); 
-		});
-		req.end();	
+				catch(e){}
 
+				if('response' in data) return resolve( data.response );
+				else if( 'error' in data ) return reject( data.error );
+				else reject({code: 'UNKNOWN_ERROR'});
+			},
+
+			error => reject(error)
+		);
 	});
 }
-
-
 
 class App extends EventEmitter{	
 	constructor( opts ){
@@ -60,9 +68,7 @@ class App extends EventEmitter{
 	if( typeof opts !== 'object' ) throw new Error( "Invalid options type: " + typeof opts );
 	if(! ('appid' in opts) ) throw new Error( "No app id in options" );
 
-	this.appid = opts.appid;
-	this.appkey = opts.appkey;
-	this.host = opts.host;
+	Object.assign( this, opts );
 
 	this._getCode = this._getCode.bind(this);
 	this.setCode = this.setCode.bind(this);
@@ -76,7 +82,10 @@ class App extends EventEmitter{
 
 	this.Router = express.Router();
 	this.Router.get( '/vkauth' , this._getCode );
-
+	
+	this._requestServiceToken( err => {
+		if( err )	logger.debug( err );
+	});
 	}
 	
 	_getCode(req, res){
@@ -92,47 +101,57 @@ class App extends EventEmitter{
 				client_id:this.appid,
 				display:'page',
 				redirect_uri:redirect_back,
-				scope:['groups','offline'],
+				scope:['groups'],
 				response_type:'code'
 			});
 			res.redirect(redirect); 
 		}	
 	}
 	
-	_requestServiceToken(){
-		var reg = http.get("https://oauth.vk.com/access_token?" + query.stringify({
+	_requestServiceToken( cb ){
+		logger.debug('Requesting service token');
+		requestBody("https://oauth.vk.com/access_token?" + query.stringify({
 			client_id:		this.appid,
 			client_secret:		this.appkey,
 			grant_type:		"client_credentials",
 			v:			this.v
-		}), res => {
-			var datastr = "";
-			
-			res.on('data', chunk => {
-				datastr += chunk;
-			});
-			res.on('end', () => {
-			
-				var data_json = JSON.parse( datastr.toString('utf'));
-				
-				if(! ('access_token' in data_json) ){
-					this.emit('serviceTokenReqError');
-					return;
+		})).then(
+			response => {
+				var data = {};
+				try{
+					data = JSON.parse(response.toString('utf8'));
 				}
+				catch(e){
+				}
+				if( 'access_token' in data ){
+					logger.debug('Service Token found in response');
+					this._serviceToken = data.access_token;
+					this.secureRequest = function( method, opts = {} ){
+						opts.access_token = this._serviceToken;
+						opts.client_secret = this.appkey;
+						return Request( method, opts );
+					}.bind(this);
 
-				this._serviceToken = data_json.access_token;
-				this.secureRequest = function( method, opts={}, v=apiv ){
-					opts.client_secret = this.appkey;
-					return Request( method, opts, this._serviceToken, v );
-				}.bind(this);
+					this.emit('serviceTokenAccepted');
+					return cb( null );
+				}
+				else if( 'error' in data ){
+					logger.debug( data );		
+				}
+			},
 
-				this.emit('serviceTokenAccepted');
-				return;
-			});
-		}); 
+			error => {
+				logger.debug("Error caught");
+				return cb( error );
+			}
+ 
+
+		);
+	
 	}
 
 	_requestToken(){
+		logger.debug("Requesting token");
 		var reqOpts = {
 			host:'oauth.vk.com',
 			method:'GET',
@@ -144,30 +163,21 @@ class App extends EventEmitter{
 			})
 		};
 
-		var reg = http.request( reqOpts, res => {
-			var datastr = "";
-			logger.debug("Response code:",res.statusCode );
-			if( res.statusCode != 200 ){
-				this.code = false;
-				this.emit('httpError', {code:res.statusCode, message:res.statusMessage});
-				return;
-			}
-			res.on('data', chunk => {
-				datastr += chunk;
-			});
-			res.on('end', () => {
+		requestBody( reqOpts ).then(
+			response => {
+				var data = {};
 				try {
-					var data_json =  JSON.parse(datastr.toString('utf8'));
+					data =  JSON.parse(response.toString('utf8'));
 				}
 				catch(e){
-					data_json = {};	
 				}
 
-				if( 'access_token' in data_json ){
-					this.token = data_json.access_token;
+				if( 'access_token' in data ){
+					logger.debug('Token found in response');
+					this.token = data.access_token;
 
 					this.tokenExpired = false;
-					this._tokenExpiresIn = 1000*data_json.expires_in;
+					this._tokenExpiresIn = 1000*data.expires_in;
 					this._tokenExpireTime = new Date( Date.now() + this._tokenExpiresIn);
 					
 					if(  this._tokenExpiresIn > 0  ) setTimeout( ()=>{
@@ -176,13 +186,14 @@ class App extends EventEmitter{
 						this.emit('tokenExpired');
 					},this._tokenExpiresIn );
 
-					this.Request = function(method, opts={}, v=apiv){
-						return Request(method, opts, this.token, v );
+					this.Request = function(method, opts={}){
+						opts.access_token = this.token;
+						return Request(method, opts );
 					}.bind(this);
 
 					this.emit('tokenAccepted');
 				}	
-				else if( 'error' in data_json ){
+				else if( 'error' in data ){
 					this.code = false;
 					this.emit('tokenError', data_json);
 				}
@@ -190,17 +201,12 @@ class App extends EventEmitter{
 					this.emit('unknownError');
 				}
 			});
-			
-		});
 
-		reg.end();	
 	}
 
 
 
 }
-
-
 
 App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
 	this.code = code;
