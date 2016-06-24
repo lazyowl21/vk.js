@@ -41,24 +41,31 @@ function Request(method, opts = {}){
 		method:'POST',
 		path:'/method/' + method + '?' + query.stringify( opts ) 
 	}
+	
+	return requestBody( reqOpts )
+		.then( res => JSON.parse( res.toString('utf8') ) )
+		.then( function requestErrHandler( data ) {
+			if('response' in data) return data.response;
+			else {
+				var err = new Error( data.error.error_msg );
+				err.name = "VK_ERROR";
+				err.code = data.error.error_code;
+				err.request_params = data.error.request_params;
+				throw  err;
+			}
+		});
+}
 
-	return new Promise( (resolve, reject)=>{
-		requestBody( reqOpts ).then(
-			response => {
-				var data = {};
-				try{
-					data = JSON.parse( response.toString('utf8'));
-				}
-				catch(e){}
-
-				if('response' in data) return resolve( data.response );
-				else if( 'error' in data ) return reject( data.error );
-				else reject({code: 'UNKNOWN_ERROR'});
-			},
-
-			error => reject(error)
-		);
-	});
+function checkToken( token ){
+	return Request( "users.get" , {access_token:token} )
+		.then( data => {
+			if( data.length === 0 ){
+				var err = new Error('Token seems to be invalid (empty users.get result)');
+				err.name = "VK_ERROR";
+				throw err;
+			}
+			else return data[0].id;
+		});	
 }
 
 class App extends EventEmitter{	
@@ -163,17 +170,10 @@ class App extends EventEmitter{
 			})
 		};
 
-		requestBody( reqOpts ).then(
-			response => {
-				var data = {};
-				try {
-					data =  JSON.parse(response.toString('utf8'));
-				}
-				catch(e){
-				}
-
+		requestBody( reqOpts )
+			.then( resp => JSON.parse( resp.toString('utf8') ))
+			.then( data => {
 				if( 'access_token' in data ){
-					logger.debug('Token found in response');
 					this.token = data.access_token;
 
 					this.tokenExpired = false;
@@ -192,20 +192,16 @@ class App extends EventEmitter{
 					}.bind(this);
 
 					this.emit('tokenAccepted');
-				}	
-				else if( 'error' in data ){
-					this.code = false;
-					this.emit('tokenError', data_json);
 				}
-				else {
-					this.emit('unknownError');
+				else if('error' in data){
+					var err = new Error( data.error.error_msg );
+					err.name = "VK_ERROR";
+					err.code = data.error.error_code;
+					throw err;
 				}
-			});
-
-	}
-
-
-
+			})
+			.catch( err => console.log(err) );
+	}	
 }
 
 App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
