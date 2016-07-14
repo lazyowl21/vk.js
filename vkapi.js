@@ -15,6 +15,13 @@ var httpErr = require('http-errors');
 var apiv='5.52'
 var  codeExpiresIn = 3600*1000;
 
+class VKError extends Error {
+	constructor(msg){
+		super(msg);
+		this.name = 'VKError';
+	}
+}
+
 var _oauthRequest = request.defaults({
 	baseUrl:	"https://oauth.vk.com",
 	method:		"POST",
@@ -36,29 +43,30 @@ function errFromResp( resp ){
 	return httpErr( resp.statusCode, resp.statusMessage ); 
 }
 
-
-function Request(method, opts = {}){
-	return new Promise( (resolve,reject) => {
-		_apiRequest( { uri: method, qs: opts },  ( err, resp, body )=>{
-			if(resp.statusCode != 200){
-				throw errFromResp(resp);
+function promisifyRequest(req){
+	return function(){
+		someargs = arguments;		
+		return new Promise( (resolve,reject) => {
+			function cb( err, resp, body ){
+				if(err) throw err;
+				if(resp.statusCode != 200 ) throw errFromResp(resp);
+				resolve(body);
 			}	
-
-			if( 'response' in body ){
-				resolve(body.response);
-			}
-			else if( 'error' in body ){
-				let err = new Error( body.error.error_msg );
-				err.code = "VK_ERROR";
-				err.name = "VKRequestError";
-				throw err;
-			}
-		}).on('error', reject);
-	});
-
-	
+		 	req(...someargs, cb );
+		});
+	}
 }
 
+_apiRequestP = promisifyRequest(_apiRequest);
+_oauthRequestP = promisifyRequest( _oauthRequest );
+
+function Request(method, opts = {}){
+	return _apiRequestP( {uri: method, qs: opts} )
+		.then( body => {
+			if('response' in body ) return body.response;
+			else if( 'error' in body ) throw new VKError( body.error.error_msg );
+		});
+}
 
 class App extends EventEmitter{	
 	constructor( opts ){
@@ -113,8 +121,8 @@ class App extends EventEmitter{
 		}	
 	}
 	
-	_requestServiceToken( cb ){
-		_oauthRequest({
+	_requestServiceToken(){
+		_oauthRequestP({
 			uri:	"access_token",
 			qs:	{
 				client_id:		this.appid,
@@ -123,7 +131,7 @@ class App extends EventEmitter{
 				v: this.v
 				},
 			json:	true
-			}, ( err, resp, body )=> {
+			}).then( body => {
 				if( 'access_token' in body ){
 					var token = body.access_token;
 
@@ -136,11 +144,9 @@ class App extends EventEmitter{
 					}.bind(this);
 
 					this.emit('serviceTokenAccepted');
-					return cb( null );
+					return this.serviceToken;
 				}
-				else if( 'error' in body ){
-					logger.debug( data );		
-				}
+				else if( 'error' in body ) throw new VKError( body.error.error_msg );
 		});				
 
 		logger.debug('Requesting service token');
@@ -149,7 +155,7 @@ class App extends EventEmitter{
 	_requestToken(){
 		logger.debug("Requesting token");
 		
-		_oauthRequest({
+		_oauthRequestP({
 			uri:	"access_token",
 			qs:	{
 				client_id:this.appid,
@@ -157,15 +163,12 @@ class App extends EventEmitter{
 				redirect_uri:this.redirect_uri,
 				code:this.code		
 				}
-		}, ( err, resp, data ) =>{
+		}).then( data =>{
 			if( 'access_token' in data ){
 				this.setToken( data.access_token, data.expires_in );	
 			}
 			else if('error' in data){
-				var err = new Error( data.error.error_msg );
-				err.name = "VK_ERROR";
-				err.code = data.error.error_code;
-				throw err;
+				throw new VKError(data.error.error_msg);
 			}	
 		});
 	}
