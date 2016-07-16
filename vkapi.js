@@ -39,18 +39,22 @@ var _apiRequest = request.defaults({
 });
 
 
-function errFromResp( resp ){
-	return httpErr( resp.statusCode, resp.statusMessage ); 
-}
+/**
+ * Promisifies request object
+ * @param {request} req - The request object
+ * @returns {function} - Promisified requset object
+ */
+
 
 function promisifyRequest(req){
 	return function(){
 		someargs = arguments;		
 		return new Promise( (resolve,reject) => {
 			function cb( err, resp, body ){
-				if(err) throw err;
-				if(resp.statusCode != 200 ) throw errFromResp(resp);
-				resolve(body);
+				if(err) reject(err);
+				if(resp.statusCode != 200 ) 
+					reject( httpErr(resp.statusCode, resp.statusMessage) );
+				return resolve(body);
 			}	
 		 	req(...someargs, cb );
 		});
@@ -59,6 +63,12 @@ function promisifyRequest(req){
 
 _apiRequestP = promisifyRequest(_apiRequest);
 _oauthRequestP = promisifyRequest( _oauthRequest );
+
+/**
+ * VK API Request
+ * @param {string} method - Method 
+ * @param {object} opts - Method options (including access_token and version)
+ */
 
 function Request(method, opts = {}){
 	return _apiRequestP( {uri: method, qs: opts} )
@@ -86,20 +96,22 @@ class App extends EventEmitter{
 	this._getCode = this._getCode.bind(this);
 	this.setCode = this.setCode.bind(this);
 	this.setToken = this.setToken.bind(this);
+	this.setServiceToken = this.setServiceToken.bind(this);
+
 
 	this.token = false;
 	this.code = false;
 
-	this.on('codeAccepted', this._requestToken );	
+	this.on('codeAccepted', this.requestToken );	
 
 	this._serviceToken = false;
 
 	this.Router = express.Router();
 	this.Router.get( '/vkauth' , this._getCode );
 	
-	if( this.useSecureRequests ) this._requestServiceToken( err => {
-		if( err )	logger.debug( err );
-	});
+	this.requestServiceToken();	
+
+
 	}
 	
 	_getCode(req, res){
@@ -121,8 +133,8 @@ class App extends EventEmitter{
 		}	
 	}
 	
-	_requestServiceToken(){
-		_oauthRequestP({
+	requestServiceToken(){
+		return( _oauthRequestP({
 			uri:	"access_token",
 			qs:	{
 				client_id:		this.appid,
@@ -133,26 +145,15 @@ class App extends EventEmitter{
 			json:	true
 			}).then( body => {
 				if( 'access_token' in body ){
-					var token = body.access_token;
-
-					this.serviceToken = (this.hideTokens)? true : token;
-
-					this.secureRequest = function( method, opts = {} ){
-						opts.access_token = token;
-						opts.client_secret = this.appkey;
-						return Request( method, opts );
-					}.bind(this);
-
-					this.emit('serviceTokenAccepted');
+					this.setServiceToken( body.access_token );
 					return this.serviceToken;
 				}
 				else if( 'error' in body ) throw new VKError( body.error.error_msg );
-		});				
+		}) );				
 
-		logger.debug('Requesting service token');
-		}
+	}
 
-	_requestToken(){
+	requestToken(){
 		logger.debug("Requesting token");
 		
 		_oauthRequestP({
@@ -165,7 +166,9 @@ class App extends EventEmitter{
 				}
 		}).then( data =>{
 			if( 'access_token' in data ){
-				this.setToken( data.access_token, data.expires_in );	
+				this.setToken( data.access_token, data.expires_in );
+				data.access_token = this.token;
+				return data;	
 			}
 			else if('error' in data){
 				throw new VKError(data.error.error_msg);
@@ -173,6 +176,19 @@ class App extends EventEmitter{
 		});
 	}
 
+}
+
+App.prototype.setServiceToken = function( token ){
+	this.serviceToken = (this.hideTokens)? true : token;
+
+	this.secureRequest = function( method, opts = {} ){
+		opts.access_token = token;
+		opts.client_secret = this.appkey;
+		return Request( method, opts );
+	}.bind(this);
+
+	this.emit('serviceTokenAccepted');
+	return;	
 }
 
 App.prototype.setToken = function( token, exprsIn = 0 ){
@@ -209,4 +225,5 @@ App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
 }
 
 exports.Request = Request;
+
 exports.App = App;
