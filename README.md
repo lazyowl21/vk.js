@@ -20,7 +20,7 @@ Returns:
      var vk = require("vk.js");
      vk.Request("users.get",{user_ids:[1]})
         .then( data => {
-            // \[ \{ uid: 1, first_name: 'Павел', last_name: 'Дуров' \} \]
+            // [ { uid: 1, first_name: 'Павел', last_name: 'Дуров' } ]
             // data processing
         });
 
