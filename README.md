@@ -1,7 +1,7 @@
 # vk.js
 Simple implementation of VK API in Node.js. 
 
-## API Requests
+## API Requests ( see [Api Requests](https://new.vk.com/dev/api_requests) )
 
 There is simple interface to perform requests to VK API. 
 
