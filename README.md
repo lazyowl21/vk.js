@@ -1,9 +1,9 @@
 # vk.js
 Simple implementation of VK API in Node.js. 
 
-## API Requests ( see [Api Requests](https://new.vk.com/dev/api_requests) )
+## API Requests ( see [API Requests](https://new.vk.com/dev/api_requests) )
 
-There is simple interface to perform requests to VK API. 
+There is simple interface to perform requests to VK API via HTTPS protocol. 
 
     var vk = require("vk.js");
     var req = vk.Request( method, method_options );
@@ -23,5 +23,7 @@ Returns:
             // [ { uid: 1, first_name: 'Павел', last_name: 'Дуров' } ]
             // data processing
         });
+
+
 
 [Authorization Code Flow](https://new.vk.com/dev/authcode_flow_user) and [Client Credentials Flow](https://new.vk.com/dev/client_cred_flow)  
