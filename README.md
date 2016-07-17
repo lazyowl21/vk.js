@@ -20,7 +20,7 @@ Returns:
      var vk = require("vk.js");
      vk.Request("users.get",{user_ids:[1]})
         .then( data => {
-            // data corresponds to 'response' field in VK API response.
+            // \[ \{ uid: 1, first_name: 'Павел', last_name: 'Дуров' \} \]
             // data processing
         });
 
