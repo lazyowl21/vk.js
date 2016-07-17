@@ -10,7 +10,7 @@ Simple implementation of VK API in Node.js.
     
 Parameters:
  + method [string] 
- + method_options [object](optional)
+ + method_options \[object\]\(optional\)
 
 Returns:
 Promise option. 
