@@ -1,7 +1,3 @@
-var log4js = require('log4js');
-var logger = log4js.getLogger();
-logger.setLevel('debug');
-
 var http = require('https');
 var query = require('querystring');
 
@@ -9,7 +5,7 @@ var express = require('express');
 
 var EventEmitter = require('events');
 
-var request = require('request').defaults({timeout:20000});
+var request = require('request').defaults({timeout:5000});
 var httpErr = require('http-errors');
 
 var apiv='5.52'
@@ -51,9 +47,9 @@ function promisifyRequest(req){
 		someargs = arguments;		
 		return new Promise( (resolve,reject) => {
 			function cb( err, resp, body ){
-				if(err) reject(err);
+				if(err) return reject(err);
 				if(resp.statusCode != 200 ) 
-					reject( httpErr(resp.statusCode, resp.statusMessage) );
+					return reject( httpErr(resp.statusCode, resp.statusMessage) );
 				return resolve(body);
 			}	
 		 	req(...someargs, cb );
@@ -89,31 +85,26 @@ class App extends EventEmitter{
 	this.hideTokens = true;
 	this.scope = [];
 
-	this.useSecureRequests = true;
-
 	Object.assign( this, opts );
 
 	this._getCode = this._getCode.bind(this);
+
 	this.setCode = this.setCode.bind(this);
 	this.setToken = this.setToken.bind(this);
 	this.setServiceToken = this.setServiceToken.bind(this);
 
+	this.requestServiceToken = this.requestServiceToken.bind(this);
+	this.requestToken = this.requestToken.bind(this);
 
 	this.token = false;
 	this.code = false;
-
-	this.on('codeAccepted', this.requestToken );	
-
-	this._serviceToken = false;
+	this.serviceToken = false;
 
 	this.Router = express.Router();
 	this.Router.get( '/vkauth' , this._getCode );
-	
-	this.requestServiceToken();	
 
-
+	this.on('codeAccepted', this.requestToken );	
 	}
-	
 	_getCode(req, res){
 		if( 'code' in req.query ){
 			this.setCode( req.query.code );
@@ -134,7 +125,7 @@ class App extends EventEmitter{
 	}
 	
 	requestServiceToken(){
-		return( _oauthRequestP({
+		return _oauthRequestP({
 			uri:	"access_token",
 			qs:	{
 				client_id:		this.appid,
@@ -144,18 +135,13 @@ class App extends EventEmitter{
 				},
 			json:	true
 			}).then( body => {
-				if( 'access_token' in body ){
-					this.setServiceToken( body.access_token );
-					return this.serviceToken;
-				}
+				if( 'access_token' in body ) return this.setServiceToken( body.access_token );
 				else if( 'error' in body ) throw new VKError( body.error.error_msg );
-		}) );				
+			}); 				
 
 	}
 
 	requestToken(){
-		logger.debug("Requesting token");
-		
 		_oauthRequestP({
 			uri:	"access_token",
 			qs:	{
@@ -165,14 +151,8 @@ class App extends EventEmitter{
 				code:this.code		
 				}
 		}).then( data =>{
-			if( 'access_token' in data ){
-				this.setToken( data.access_token, data.expires_in );
-				data.access_token = this.token;
-				return data;	
-			}
-			else if('error' in data){
-				throw new VKError(data.error.error_msg);
-			}	
+			if( 'access_token' in data ) return this.setToken( data );
+			else if('error' in data) throw new VKError(data.error.error_msg);	
 		});
 	}
 
@@ -188,21 +168,24 @@ App.prototype.setServiceToken = function( token ){
 	}.bind(this);
 
 	this.emit('serviceTokenAccepted');
-	return;	
+	return this.serviceToken;	
 }
 
-App.prototype.setToken = function( token, exprsIn = 0 ){
+App.prototype.setToken = function( auth ){
+	if( ! 'access_token' in auth ) throw new Error("No access token presented");
+	var token = auth.access_token;
+	
 	this.token = (this.hideTokens)? true: token;
 	
 	this.tokenExpired = false;
-	this.tokenExpiresIn = 1000*exprsIn;
-	this.tokenExpireTime = new Date( Date.now() + this.tokenExpiresIn );
+	this.tokenExpiresIn = auth.expires_in || 0;
+	this.tokenExpireTime = new Date( Date.now() + 1000*this.tokenExpiresIn );
 	
-	if( exprsIn > 0 ) setTimeout( () =>{
+	if( this.tokenExpiresIn > 0 ) setTimeout( () =>{
 		this.token = false;
 		this.tokenExpired = true;
 		this.emit('tokenExpired');
-	}, this.tokenExpiresIn );
+	}, 1000*this.tokenExpiresIn );
 
 	this.Request = function(method, opts={}){
 		opts.access_token = token;
@@ -210,6 +193,7 @@ App.prototype.setToken = function( token, exprsIn = 0 ){
 	}.bind(this);
 
 	this.emit('tokenAccepted');
+	return this.token;
 }
 
 App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
@@ -225,5 +209,4 @@ App.prototype.setCode = function( code, exprsIn = codeExpiresIn ){
 }
 
 exports.Request = Request;
-
 exports.App = App;

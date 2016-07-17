@@ -1,17 +1,19 @@
 {
   "name": "vk.js",
-  "version": "0.0.1",
+  "version": "0.1",
   "description": "vk nodejs plugin",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/test.js"
   },
-  "author": "lazyowl21",
+  "author": "EugeneK.",
   "license": "ISC",
   "dependencies": {
     "express": "^4.13.4",
     "http-errors": "^1.5.0",
-    "log4js": "^0.6.37",
     "request": "^2.73.0"
+  },
+  "devDependencies": {
+    "should": "^9.0.2"
   }
 }
